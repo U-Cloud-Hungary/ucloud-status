@@ -1,0 +1,16 @@
+[
+  {
+    "id": "a935b77e-9566-459a-a352-144e78de5432",
+    "type": "error",
+    "message": "Az \"API Szerver\" hardver hiba miatt jelenleg nem elérhető. Dolgozunk a hiba elhárításán!",
+    "timestamp": "2025-05-12T19:55:24.275Z",
+    "active": false
+  },
+  {
+    "id": "fc128a9b-6313-43f8-aea8-00a4e3bdd0fb",
+    "type": "info",
+    "message": "ASD",
+    "timestamp": "2025-05-12T20:02:26.132Z",
+    "active": false
+  }
+]

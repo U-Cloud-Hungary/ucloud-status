@@ -1,0 +1,19 @@
+{
+  "categories": [
+    {
+      "id": "vps_backend",
+      "name": "Frontend",
+      "servers": []
+    },
+    {
+      "id": "d1e0e1df-18c7-4a0b-ba9e-592624b9959b",
+      "name": "VPS Node",
+      "servers": []
+    },
+    {
+      "id": "e7f38d2d-0533-403c-a056-f9528d9db0c2",
+      "name": "Game Node",
+      "servers": []
+    }
+  ]
+}

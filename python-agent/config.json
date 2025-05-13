@@ -1,0 +1,6 @@
+{
+  "api_endpoint": "http://localhost:3000/api/metrics",
+  "api_key": "sk_test_api1",
+  "interval": 60,
+  "debug": false
+}

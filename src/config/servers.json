@@ -1,0 +1,18 @@
+{
+  "servers": [
+    {
+      "id": "srv_1",
+      "name": "API Szerver",
+      "location": "Budapest",
+      "apiKey": "sk_test_api1",
+      "endpoint": "http://localhost:3000/api/metrics"
+    },
+    {
+      "id": "srv_2", 
+      "name": "Auth Szerver",
+      "location": "Budapest",
+      "apiKey": "sk_test_api2",
+      "endpoint": "http://localhost:3000/api/metrics"
+    }
+  ]
+}
