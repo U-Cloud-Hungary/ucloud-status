@@ -247,7 +247,3 @@ sudo systemctl start ucloud-monitor
 4. Telepítsd a függőségeket: `npm install`
 5. Építsd újra a frontendet: `npm run build`
 6. Indítsd újra a szervert: `npm start`
-
-## 📝 Licensz
-
-MIT License - lásd a [LICENSE](LICENSE) fájlt a részletekért.
