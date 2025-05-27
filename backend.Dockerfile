@@ -3,10 +3,10 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY backend/package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy source files
 COPY . .
@@ -15,4 +15,4 @@ COPY . .
 EXPOSE 3000
 
 # Start the server
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "npm run dev || (echo 'Server crashed, keeping container alive for debugging' && tail -f /dev/null)"]

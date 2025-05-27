@@ -1,0 +1,37 @@
+{
+  "categories": [
+    {
+      "id": "vps_backend",
+      "name": "Frontend",
+      "servers": []
+    },
+    {
+      "id": "d1e0e1df-18c7-4a0b-ba9e-592624b9959b",
+      "name": "VPS Node",
+      "servers": [
+        {
+          "id": "0c9de965-8df8-4d7f-9ebb-83ce58dee7e6",
+          "name": "Production Server",
+          "location": "US East",
+          "apiKey": "sk_cc549fac-2467-4c51-96eb-a87c24f03096",
+          "categoryId": "d1e0e1df-18c7-4a0b-ba9e-592624b9959b"
+        }
+      ]
+    },
+    {
+      "id": "e7f38d2d-0533-403c-a056-f9528d9db0c2",
+      "name": "Game Node",
+      "servers": []
+    },
+    {
+      "id": "32b5f5fe-eca3-4f97-bd75-d9e92a9ce5b1",
+      "name": "14214",
+      "servers": []
+    },
+    {
+      "id": "f3599f75-946d-4be8-a723-5513b6aac41a",
+      "name": "gdsgdsg",
+      "servers": []
+    }
+  ]
+}

@@ -3,13 +3,13 @@ FROM node:20-alpine as builder
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY frontend/package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy source files
-COPY . .
+COPY /frontend .
 
 # Start the Vite dev server
 EXPOSE 5173
