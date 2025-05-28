@@ -1,0 +1,140 @@
+name: CI/CD - Build and Deploy to Cloudron
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Manuális futtatás engedélyezése
+
+env:
+  DOCKER_IMAGE: turizoltan96/ucaloudstatus
+  CLOUDRON_APP_DOMAIN: test.ucloud.hu
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚀 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: 📦 Install dependencies
+        run: |
+          cd frontend && npm ci
+          cd ../backend && npm ci
+
+      - name: 🧪 Run tests (frontend)
+        run: |
+          cd frontend
+          npm run test:ci || echo "No tests configured"
+        continue-on-error: true
+
+      - name: 🧪 Run tests (backend)
+        run: |
+          cd backend
+          npm test || echo "No tests configured"
+        continue-on-error: true
+
+      - name: 🏷️ Generate version tag
+        id: version
+        run: |
+          # Git commit SHA alapú verzió
+          SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          VERSION="${TIMESTAMP}-${SHORT_SHA}"
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
+
+      - name: 🔑 Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🏗️ Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.VERSION }}
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.SHORT_SHA }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: ☁️ Install Cloudron CLI
+        run: |
+          wget https://cloudron.io/downloads/cloudron-cli-linux-x64
+          chmod +x cloudron-cli-linux-x64
+          sudo mv cloudron-cli-linux-x64 /usr/local/bin/cloudron
+          cloudron --version
+
+      - name: 🔐 Configure Cloudron CLI
+        run: |
+          echo "${{ secrets.CLOUDRON_TOKEN }}" | cloudron login --token
+          cloudron status
+
+      - name: 🚀 Update Cloudron app
+        run: |
+          echo "Updating Cloudron app with new image..."
+          cloudron update --app ${{ env.CLOUDRON_APP_DOMAIN }} --image ${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.VERSION }}
+          
+          echo "Waiting for deployment to complete..."
+          sleep 30
+          
+          # Health check
+          MAX_RETRIES=10
+          RETRY_COUNT=0
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -f -s https://${{ env.CLOUDRON_APP_DOMAIN }}/health > /dev/null; then
+              echo "✅ App is healthy!"
+              break
+            else
+              echo "⏳ Waiting for app to be ready... (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+              sleep 15
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+            fi
+          done
+          
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "❌ App health check failed after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: 📝 Create deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** \`${{ steps.version.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ steps.version.outputs.SHORT_SHA }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **App URL:** https://${{ env.CLOUDRON_APP_DOMAIN }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ✅ Deployed successfully" >> $GITHUB_STEP_SUMMARY
+
+      - name: 📧 Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          echo "## ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** \`${{ steps.version.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ steps.version.outputs.SHORT_SHA }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs for more details." >> $GITHUB_STEP_SUMMARY

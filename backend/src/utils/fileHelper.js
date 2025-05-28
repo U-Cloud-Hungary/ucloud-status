@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { DATA_DIR } from '../config/environment.js';
@@ -8,14 +8,35 @@ import logger from './logger.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const baseDir = join(__dirname, '../../');
 
-export const PATHS = {
-    DATA: join(baseDir, DATA_DIR),
-    METRICS: join(baseDir, DATA_DIR, 'metrics'),
-    HISTORY: join(baseDir, DATA_DIR, 'history'),
-    NOTIFICATIONS: join(baseDir, DATA_DIR, 'notifications.json'),
-    CATEGORIES: join(baseDir, DATA_DIR, 'categories.json'),
-    LOGS: join(baseDir, 'logs')
+// Cloudron-kompatibilis path kezelés
+const getDataPath = () => {
+    if (isAbsolute(DATA_DIR)) {
+        // Ha abszolút útvonal (pl. /tmp/app/data), használd közvetlenül
+        return DATA_DIR;
+    } else {
+        // Ha relatív útvonal (pl. ./data), építsd fel a baseDir-ből
+        return join(baseDir, DATA_DIR);
+    }
 };
+
+const ACTUAL_DATA_PATH = getDataPath();
+
+export const PATHS = {
+    DATA: ACTUAL_DATA_PATH,
+    METRICS: join(ACTUAL_DATA_PATH, 'metrics'),
+    HISTORY: join(ACTUAL_DATA_PATH, 'history'),
+    NOTIFICATIONS: join(ACTUAL_DATA_PATH, 'notifications.json'),
+    CATEGORIES: join(ACTUAL_DATA_PATH, 'categories.json'),
+    LOGS: join(ACTUAL_DATA_PATH, 'logs')  // Logs is DATA_DIR-be, nem baseDir-be
+};
+
+// Debug log
+console.log('🔍 FileHelper Debug:');
+console.log('  DATA_DIR from env:', DATA_DIR);
+console.log('  isAbsolute(DATA_DIR):', isAbsolute(DATA_DIR));
+console.log('  ACTUAL_DATA_PATH:', ACTUAL_DATA_PATH);
+console.log('  PATHS.DATA:', PATHS.DATA);
+console.log('  PATHS.METRICS:', PATHS.METRICS);
 
 export const initializeDirectories = () => {
     const directories = [
@@ -26,9 +47,17 @@ export const initializeDirectories = () => {
     ];
 
     directories.forEach(dir => {
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-            logger.info(`Created directory: ${dir}`);
+        console.log(`🔍 Attempting to create directory: ${dir}`);
+        try {
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+                logger.info(`Created directory: ${dir}`);
+            } else {
+                console.log(`✅ Directory already exists: ${dir}`);
+            }
+        } catch (error) {
+            logger.error(`❌ Failed to create directory ${dir}:`, error);
+            // Ne álljon le az app, folytassa
         }
     });
 
@@ -37,24 +66,32 @@ export const initializeDirectories = () => {
 
 const initializeDataFiles = () => {
     // Initialize notifications file
-    if (!fs.existsSync(PATHS.NOTIFICATIONS)) {
-        fs.writeFileSync(PATHS.NOTIFICATIONS, JSON.stringify([]));
-        logger.info('Initialized notifications.json');
+    try {
+        if (!fs.existsSync(PATHS.NOTIFICATIONS)) {
+            fs.writeFileSync(PATHS.NOTIFICATIONS, JSON.stringify([]));
+            logger.info('Initialized notifications.json');
+        }
+    } catch (error) {
+        logger.error('Failed to initialize notifications.json:', error);
     }
 
     // Initialize categories file
-    if (!fs.existsSync(PATHS.CATEGORIES)) {
-        const initialCategories = {
-            categories: [
-                {
-                    id: 'vps_backend',
-                    name: 'VPS Backend',
-                    servers: []
-                }
-            ]
-        };
-        fs.writeFileSync(PATHS.CATEGORIES, JSON.stringify(initialCategories, null, 2));
-        logger.info('Initialized categories.json');
+    try {
+        if (!fs.existsSync(PATHS.CATEGORIES)) {
+            const initialCategories = {
+                categories: [
+                    {
+                        id: 'vps_backend',
+                        name: 'VPS Backend',
+                        servers: []
+                    }
+                ]
+            };
+            fs.writeFileSync(PATHS.CATEGORIES, JSON.stringify(initialCategories, null, 2));
+            logger.info('Initialized categories.json');
+        }
+    } catch (error) {
+        logger.error('Failed to initialize categories.json:', error);
     }
 };
 

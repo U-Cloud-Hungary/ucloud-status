@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "manifestVersion": 2,
+  "title": "UCloud Status",
+  "description": "Server status monitoring dashboard",
+  "author": "TuriZoltán",
+  "website": "https://github.com/turizoltan96/ucaloudstatus",
+  "healthCheckPath": "/health",
+  "httpPort": 3000,
+  "minBoxVersion": "7.0.0",
+  "addons": {
+    "localstorage": {
+      "path": "/app/data",
+      "uid": 1000,
+      "gid": 1000
+    }
+  },
+  "tags": [
+    "monitoring",
+    "status",
+    "dashboard"
+  ]
+}

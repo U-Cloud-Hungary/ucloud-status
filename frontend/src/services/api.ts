@@ -2,12 +2,12 @@ import { ServerStatus, Notification, Category, Server } from '../types';
 
 // Category Management
 export const fetchCategories = async (): Promise<Category[]> => {
-  const response = await fetch('http://localhost:3000/api/categories');
+  const response = await fetch('/api/categories');
   return response.json();
 };
 
 export const createCategory = async (category: { name: string }): Promise<Category> => {
-  const response = await fetch('http://localhost:3000/api/categories', {
+  const response = await fetch('/api/categories', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -18,7 +18,7 @@ export const createCategory = async (category: { name: string }): Promise<Catego
 };
 
 export const updateCategory = async (category: { id: string; name: string }): Promise<Category> => {
-  const response = await fetch(`http://localhost:3000/api/categories/${category.id}`, {
+  const response = await fetch(`/api/categories/${category.id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -29,14 +29,14 @@ export const updateCategory = async (category: { id: string; name: string }): Pr
 };
 
 export const deleteCategory = async (id: string): Promise<void> => {
-  await fetch(`http://localhost:3000/api/categories/${id}`, {
+  await fetch(`/api/categories/${id}`, {
     method: 'DELETE',
   });
 };
 
 // Server Management
 export const createServer = async (server: { name: string; location: string; categoryId: string }): Promise<Server> => {
-  const response = await fetch('http://localhost:3000/api/servers', {
+  const response = await fetch('/api/servers', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -47,7 +47,7 @@ export const createServer = async (server: { name: string; location: string; cat
 };
 
 export const updateServer = async (server: { id: string; name: string; location: string; categoryId: string }): Promise<Server> => {
-  const response = await fetch(`http://localhost:3000/api/servers/${server.id}`, {
+  const response = await fetch(`/api/servers/${server.id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -58,19 +58,19 @@ export const updateServer = async (server: { id: string; name: string; location:
 };
 
 export const deleteServer = async (id: string): Promise<void> => {
-  await fetch(`http://localhost:3000/api/servers/${id}`, {
+  await fetch(`/api/servers/${id}`, {
     method: 'DELETE',
   });
 };
 
 // Server Status
 export const fetchServers = async (): Promise<{ [key: string]: ServerStatus[] }> => {
-  const response = await fetch('http://localhost:3000/api/servers');
+  const response = await fetch('/api/servers');
   return response.json();
 };
 
 export const fetchServerDetails = async (id: string): Promise<ServerStatus> => {
-  const response = await fetch(`http://localhost:3000/api/servers`);
+  const response = await fetch(`/api/servers`);
   const data = await response.json();
   
   for (const category of Object.values(data)) {
@@ -83,12 +83,12 @@ export const fetchServerDetails = async (id: string): Promise<ServerStatus> => {
 
 // Notifications
 export const fetchNotifications = async (): Promise<Notification[]> => {
-  const response = await fetch('http://localhost:3000/api/notifications');
+  const response = await fetch('/api/notifications');
   return response.json();
 };
 
 export const createNotification = async (notification: Omit<Notification, 'id' | 'timestamp' | 'active'>): Promise<Notification> => {
-  const response = await fetch('http://localhost:3000/api/notifications', {
+  const response = await fetch('/api/notifications', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -99,7 +99,7 @@ export const createNotification = async (notification: Omit<Notification, 'id' |
 };
 
 export const dismissNotification = async (id: string): Promise<void> => {
-  await fetch(`http://localhost:3000/api/notifications/${id}`, {
+  await fetch(`/api/notifications/${id}`, {
     method: 'DELETE',
   });
 };

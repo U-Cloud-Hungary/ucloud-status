@@ -1,10 +1,13 @@
 import dotenv from 'dotenv';
+import path from 'path';
 
 dotenv.config();
 
 export const NODE_ENV = process.env.NODE_ENV || 'development';
-export const PORT = process.env.PORT || 3000;
-export const DATA_DIR = process.env.DATA_DIR || './data';
+export const PORT = process.env.PORT || 3001;
+export const DATA_DIR = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.resolve('./data');
 export const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 export const SERVER_OFFLINE_TIMEOUT = parseInt(process.env.SERVER_OFFLINE_TIMEOUT) || 2; // minutes
 export const HISTORY_RETENTION_DAYS = parseInt(process.env.HISTORY_RETENTION_DAYS) || 365;

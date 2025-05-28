@@ -26,12 +26,12 @@ services:
       context: .
       dockerfile: backend.Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3001"
     volumes:
       - ./backend:/app
     environment:
       - NODE_ENV=development
-      - PORT=3000
+      - PORT=3001
       - CORS_ORIGIN=http://localhost
       - DEBUG=true
     networks:
@@ -44,7 +44,7 @@ services:
     environment:
       - SERVER_NAME=Production Server
       - SERVER_LOCATION=US East
-      - API_ENDPOINT=http://backend:3000/api/metrics
+      - API_ENDPOINT=http://backend:3001/api/metrics
       - API_KEY=sk_cc549fac-2467-4c51-96eb-a87c24f03096
       - INTERVAL=60
       - DEBUG=false
