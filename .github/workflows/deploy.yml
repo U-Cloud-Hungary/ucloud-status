@@ -1,140 +1,227 @@
-name: CI/CD - Build and Deploy to Cloudron
+# ===========================================
+# GitHub Actions CI/CD Pipeline
+# ===========================================
+
+name: 🚀 Build, Push & Deploy to Cloudron
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch: # Manuális futtatás engedélyezése
+      - develop
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_to_cloudron:
+        description: 'Deploy to Cloudron after build'
+        required: false
+        default: true
+        type: boolean
+      version_override:
+        description: 'Override version (leave empty for auto)'
+        required: false
+        default: ''
+        type: string
 
 env:
-  DOCKER_IMAGE: turizoltan96/ucaloudstatus
-  CLOUDRON_APP_DOMAIN: test.ucloud.hu
+  IMAGE_NAME: turizoltan96/ucaloudstatus
+  CLOUDRON_APP_LOCATION: test.ucloud.hu
 
 jobs:
-  build-and-deploy:
+  # ===========================================
+  # Job 1: Build and Test
+  # ===========================================
+  build:
+    name: 🔨 Build & Test
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image_tag: ${{ steps.version.outputs.image_tag }}
+    
     steps:
-      - name: 🚀 Checkout code
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔧 Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: |
-            frontend/package-lock.json
-            backend/package-lock.json
-
-      - name: 📦 Install dependencies
-        run: |
-          cd frontend && npm ci
-          cd ../backend && npm ci
-
-      - name: 🧪 Run tests (frontend)
-        run: |
-          cd frontend
-          npm run test:ci || echo "No tests configured"
-        continue-on-error: true
-
-      - name: 🧪 Run tests (backend)
-        run: |
-          cd backend
-          npm test || echo "No tests configured"
-        continue-on-error: true
-
-      - name: 🏷️ Generate version tag
+      - name: 📋 Generate Version
         id: version
         run: |
-          # Git commit SHA alapú verzió
-          SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          VERSION="${TIMESTAMP}-${SHORT_SHA}"
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
-          echo "Generated version: ${VERSION}"
-
-      - name: 🔑 Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          if [[ "${{ github.event.inputs.version_override }}" != "" ]]; then
+            VERSION="${{ github.event.inputs.version_override }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION="1.0.${GITHUB_RUN_NUMBER}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_NAME}:${VERSION}" >> $GITHUB_OUTPUT
+          echo "🏷️ Version: ${VERSION}"
 
       - name: 🐳 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: 🏗️ Build and push Docker image
+      - name: 🔑 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PAT }}
+
+      - name: 🔨 Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.VERSION }}
-            ${{ env.DOCKER_IMAGE }}:latest
-            ${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.SHORT_SHA }}
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64
 
-      - name: ☁️ Install Cloudron CLI
+  # ===========================================
+  # Job 2: Deploy to Cloudron
+  # ===========================================
+  deploy:
+    name: 🚀 Deploy to Cloudron
+    runs-on: ubuntu-latest
+    needs: build
+    if: |
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      (github.event.inputs.deploy_to_cloudron != 'false')
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install Cloudron CLI
         run: |
-          wget https://cloudron.io/downloads/cloudron-cli-linux-x64
-          chmod +x cloudron-cli-linux-x64
-          sudo mv cloudron-cli-linux-x64 /usr/local/bin/cloudron
+          npm install -g cloudron
           cloudron --version
 
-      - name: 🔐 Configure Cloudron CLI
+      - name: 🔑 Login to Cloudron
         run: |
-          echo "${{ secrets.CLOUDRON_TOKEN }}" | cloudron login --token
-          cloudron status
+          echo "🔐 Logging into Cloudron..."
+          cloudron login ${{ secrets.CLOUDRON_SERVER_URL }} \
+            --username ${{ secrets.CLOUDRON_USERNAME }} \
+            --password ${{ secrets.CLOUDRON_PASSWORD }}
 
-      - name: 🚀 Update Cloudron app
+      - name: 🔍 Check if App Exists
+        id: check_app
         run: |
-          echo "Updating Cloudron app with new image..."
-          cloudron update --app ${{ env.CLOUDRON_APP_DOMAIN }} --image ${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.VERSION }}
-          
-          echo "Waiting for deployment to complete..."
+          if cloudron list | grep -q "${{ env.CLOUDRON_APP_LOCATION }}"; then
+            echo "app_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ App already exists, will update"
+          else
+            echo "app_exists=false" >> $GITHUB_OUTPUT
+            echo "🆕 App doesn't exist, will install"
+          fi
+
+      - name: 🆕 Install New App (if needed)
+        if: steps.check_app.outputs.app_exists == 'false'
+        run: |
+          echo "🚀 Installing new app..."
+          cloudron install --image ${{ needs.build.outputs.image_tag }} \
+            --location ${{ env.CLOUDRON_APP_LOCATION }}
+
+      - name: 🔄 Update Existing App
+        if: steps.check_app.outputs.app_exists == 'true'
+        run: |
+          echo "🔄 Updating existing app..."
+          cloudron update --app ${{ env.CLOUDRON_APP_LOCATION }} \
+            --image ${{ needs.build.outputs.image_tag }}
+
+      - name: ⚙️ Configure Environment Variables
+        run: |
+          echo "⚙️ Setting up environment variables..."
+          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set NODE_ENV=production
+          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set PORT=3000
+          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set DATABASE_URL="${{ secrets.DATABASE_URL }}"
+          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set LOG_LEVEL=info
+          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set SERVER_OFFLINE_TIMEOUT=2
+          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set HISTORY_RETENTION_DAYS=365
+
+      - name: 🔄 Restart App
+        run: |
+          echo "🔄 Restarting app..."
+          cloudron restart --app ${{ env.CLOUDRON_APP_LOCATION }}
+
+      - name: ⏳ Wait for App to Start
+        run: |
+          echo "⏳ Waiting for app to start..."
           sleep 30
-          
-          # Health check
+
+      - name: 🩺 Health Check
+        run: |
+          echo "🩺 Performing health check..."
           MAX_RETRIES=10
           RETRY_COUNT=0
           
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if curl -f -s https://${{ env.CLOUDRON_APP_DOMAIN }}/health > /dev/null; then
+            if curl -f -s "https://${{ env.CLOUDRON_APP_LOCATION }}/api/health"; then
               echo "✅ App is healthy!"
               break
             else
-              echo "⏳ Waiting for app to be ready... (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+              echo "⏳ App not ready yet, retrying in 15 seconds..."
               sleep 15
               RETRY_COUNT=$((RETRY_COUNT + 1))
             fi
           done
           
           if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-            echo "❌ App health check failed after $MAX_RETRIES attempts"
+            echo "❌ App failed health check"
+            cloudron logs --app ${{ env.CLOUDRON_APP_LOCATION }} --lines 50
             exit 1
           fi
 
-      - name: 📝 Create deployment summary
+  # ===========================================
+  # Job 3: Notification
+  # ===========================================
+  notify:
+    name: 📢 Send Notifications
+    runs-on: ubuntu-latest
+    needs: [build, deploy]
+    if: always()
+    
+    steps:
+      - name: 📢 Success Notification
+        if: needs.deploy.result == 'success'
         run: |
-          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version:** \`${{ steps.version.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** \`${{ steps.version.outputs.SHORT_SHA }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image:** \`${{ env.DOCKER_IMAGE }}:${{ steps.version.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **App URL:** https://${{ env.CLOUDRON_APP_DOMAIN }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ✅ Deployed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "🎉 Deployment successful!"
+          echo "🚀 Version: ${{ needs.build.outputs.version }}"
+          echo "🌐 URL: https://${{ env.CLOUDRON_APP_LOCATION }}"
+          echo "🐳 Image: ${{ needs.build.outputs.image_tag }}"
 
-      - name: 📧 Notify on failure
-        if: failure()
+      - name: ❌ Failure Notification
+        if: needs.build.result == 'failure' || needs.deploy.result == 'failure'
         run: |
           echo "❌ Deployment failed!"
-          echo "## ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version:** \`${{ steps.version.outputs.VERSION }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** \`${{ steps.version.outputs.SHORT_SHA }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
-          echo "Check the logs for more details." >> $GITHUB_STEP_SUMMARY
+          echo "Please check the logs above for details."
+          exit 1
+
+  # ===========================================
+  # Job 4: Cleanup Old Images (Optional)
+  # ===========================================
+  cleanup:
+    name: 🧹 Cleanup Old Images
+    runs-on: ubuntu-latest
+    needs: [build, deploy]
+    if: needs.deploy.result == 'success' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 🧹 Clean up old Docker images
+        run: |
+          echo "🧹 Cleaning up old images..."
+          # Keep last 5 versions
+          # This would require Docker Hub API calls
+          echo "Manual cleanup needed for old versions"

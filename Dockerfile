@@ -11,7 +11,17 @@ FROM node:${NODE_VERSION} AS backend-deps
 
 WORKDIR /app/backend
 COPY backend/package*.json ./
+COPY backend/prisma ./prisma
+
 RUN npm ci --only=production --silent && npm cache clean --force
+
+# Copy environment for Prisma
+COPY backend/.env.prod ./.env
+
+# Generate Prisma client BEFORE switching to production
+RUN npx prisma generate
+
+RUN npm cache clean --force
 
 # ===========================================
 # Stage 2: Frontend Build
