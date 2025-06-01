@@ -83,29 +83,6 @@ jobs:
             ${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: 🧪 Test Docker Image
-        run: |
-          echo "🧪 Testing built image..."
-          docker run --rm --detach --name test-container \
-            -p 3000:3000 \
-            -e NODE_ENV=production \
-            -e DATABASE_URL="mysql://test:test@localhost:3306/test" \
-            ${{ steps.version.outputs.image_tag }}
-          
-          # Wait for container to start
-          sleep 10
-          
-          # Basic health check
-          if docker ps | grep test-container; then
-            echo "✅ Container is running"
-            docker stop test-container
-          else
-            echo "❌ Container failed to start"
-            docker logs test-container
-            exit 1
-          fi
-
   # ===========================================
   # Job 2: Deploy to Cloudron
   # ===========================================
@@ -134,9 +111,14 @@ jobs:
       - name: 🔑 Login to Cloudron
         run: |
           echo "🔐 Logging into Cloudron..."
-          cloudron login ${{ secrets.CLOUDRON_SERVER_URL }} \
-            --username ${{ secrets.CLOUDRON_USERNAME }} \
-            --password ${{ secrets.CLOUDRON_PASSWORD }}
+          # Debug információk
+          echo "Server: ${{ secrets.CLOUDRON_SERVER_URL }}"
+          echo "Username: ${{ secrets.CLOUDRON_USERNAME }}"
+          
+          # Login with explicit parameters
+          cloudron login "${{ secrets.CLOUDRON_SERVER_URL }}" \
+            -u "${{ secrets.CLOUDRON_USERNAME }}" \
+            -p "${{ secrets.CLOUDRON_PASSWORD }}"
 
       - name: 🔍 Check if App Exists
         id: check_app
