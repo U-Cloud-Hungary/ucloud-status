@@ -111,14 +111,14 @@ jobs:
       - name: Login to Cloudron
         run: |
           echo "🔐 Logging into Cloudron..."
-          cloudron login "${{ secrets.CLOUDRON_SERVER }}" \
-            -u "${{ secrets.CLOUDRON_USERNAME }}" \
-            -p "${{ secrets.CLOUDRON_PASSWORD }}"
-        env:
-          CLOUDRON_SERVER: ${{ secrets.CLOUDRON_SERVER }}
-          CLOUDRON_USERNAME: ${{ secrets.CLOUDRON_USERNAME }}
-          CLOUDRON_PASSWORD: ${{ secrets.CLOUDRON_PASSWORD }}
-
+          expect -c "
+          spawn cloudron login ${{ secrets.CLOUDRON_SERVER_URL }}
+          expect \"Username:\"
+          send \"${{ secrets.CLOUDRON_USERNAME }}\r\"
+          expect \"Password:\"
+          send \"${{ secrets.CLOUDRON_PASSWORD }}\r\"
+          expect eof
+          "
       - name: 🔍 Check if App Exists
         id: check_app
         run: |
