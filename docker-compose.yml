@@ -1,0 +1,119 @@
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend.Dockerfile
+    volumes:
+      - ./frontend:/app
+    environment:
+      - VITE_API_URL=/api
+      - NODE_ENV=development
+    networks:
+      - app-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend.Dockerfile
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend:/app
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - CORS_ORIGIN=http://localhost
+      - DEBUG=true
+      - DATABASE_URL=mysql://ucloud:your_secure_password@mariadb:3306/ucloud_status
+      - SHADOW_DATABASE_URL=""
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:10.11
+    container_name: ucloud-mariadb
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=ucloud_status
+      - MYSQL_USER=ucloud
+      - MYSQL_PASSWORD=your_secure_password
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d
+    ports:
+      - "3306:3306"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: ucloud-phpmyadmin
+    restart: unless-stopped
+    environment:
+      - PMA_HOST=mariadb
+      - PMA_PORT=3306
+      - PMA_USER=root
+      - PMA_PASSWORD=root_password
+      - MYSQL_ROOT_PASSWORD=root_password
+    ports:
+      - "8080:80"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  monitoring-agent:
+    build:
+      context: ./python-agent
+      dockerfile: Dockerfile
+    container_name: server-monitoring-agent
+    environment:
+      - SERVER_NAME=API Server #1
+      - SERVER_LOCATION=Frankfurt, DE
+      - API_ENDPOINT=http://backend:3001/api/metrics
+      - API_KEY=sk_dev_backend_01_cbf19425
+      - INTERVAL=60
+      - DEBUG=false
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "server_monitor.py", "--test"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mariadb_data:
+    driver: local

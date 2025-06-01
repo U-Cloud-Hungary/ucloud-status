@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import { CategoryRepository } from '../repositories/categoryRepository.js';
 import logger from '../utils/logger.js';
 
@@ -18,13 +17,26 @@ export class CategoryService {
 
     async getCategoryById(id) {
         try {
-            const category = await this.categoryRepository.findById(id);
+            const category = await this.categoryRepository.findByIdWithServers(id);
             if (!category) {
                 throw new Error('Category not found');
             }
             return category;
         } catch (error) {
             logger.error(`Service error getting category ${id}:`, error);
+            throw error;
+        }
+    }
+
+    async getCategoryStats(id) {
+        try {
+            const stats = await this.categoryRepository.getCategoryStats(id);
+            if (!stats) {
+                throw new Error('Category not found');
+            }
+            return stats;
+        } catch (error) {
+            logger.error(`Service error getting category stats ${id}:`, error);
             throw error;
         }
     }
@@ -36,12 +48,11 @@ export class CategoryService {
             }
 
             const newCategoryData = {
-                id: uuidv4(),
-                name: categoryData.name.trim(),
-                servers: []
+                id: categoryData.id || crypto.randomUUID(),
+                name: categoryData.name.trim()
             };
 
-            return await this.categoryRepository.create(newCategoryData);
+            return await this.categoryRepository.createCategory(newCategoryData);
         } catch (error) {
             logger.error('Service error creating category:', error);
             throw error;
@@ -63,7 +74,7 @@ export class CategoryService {
                 dataToUpdate.name = updateData.name.trim();
             }
 
-            return await this.categoryRepository.update(id, dataToUpdate);
+            return await this.categoryRepository.updateCategory(id, dataToUpdate);
         } catch (error) {
             logger.error(`Service error updating category ${id}:`, error);
             throw error;
@@ -76,15 +87,27 @@ export class CategoryService {
                 throw new Error('Category ID is required');
             }
 
-            // Check if category has servers
-            const category = await this.categoryRepository.findById(id);
-            if (category && category.servers.length > 0) {
-                throw new Error('Cannot delete category with existing servers');
-            }
-
-            return await this.categoryRepository.delete(id);
+            // The repository will check if category has servers and throw error if needed
+            return await this.categoryRepository.deleteCategory(id);
         } catch (error) {
             logger.error(`Service error deleting category ${id}:`, error);
+            throw error;
+        }
+    }
+
+    async getAllCategoryStats() {
+        try {
+            const categories = await this.categoryRepository.findAll();
+            const stats = [];
+
+            for (const category of categories) {
+                const categoryStats = await this.categoryRepository.getCategoryStats(category.id);
+                stats.push(categoryStats);
+            }
+
+            return stats;
+        } catch (error) {
+            logger.error('Service error getting all category stats:', error);
             throw error;
         }
     }

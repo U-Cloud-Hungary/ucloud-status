@@ -1,137 +1,229 @@
-import { join } from 'path';
-import { Metrics } from '../models/Metrics.js';
-import { readJSONFile, writeJSONFile, deleteFile, PATHS } from '../utils/fileHelper.js';
-import { HISTORY_RETENTION_DAYS } from '../config/environment.js';
+import { MetricRepository } from '../repositories/MetricRepository.js';
+import { ServerRepository } from '../repositories/serverRepository.js';
+import { NotificationService } from './notificationService.js';
 import logger from '../utils/logger.js';
 
 export class MetricsService {
+    constructor() {
+        this.metricRepository = new MetricRepository();
+        this.serverRepository = new ServerRepository();
+        this.notificationService = new NotificationService();
+    }
+
     async getServerMetrics(serverId) {
         try {
-            const metricsFile = join(PATHS.METRICS, `${serverId}.json`);
-            const data = readJSONFile(metricsFile);
-            return Metrics.fromJSON(data);
+            const metric = await this.metricRepository.findLatestByServerId(serverId);
+            if (!metric) {
+                // Return default metrics if none found
+                const server = await this.serverRepository.findByIdWithDetails(serverId);
+                if (!server) {
+                    throw new Error('Server not found');
+                }
+
+                return {
+                    id: serverId,
+                    name: server.name,
+                    location: server.location,
+                    status: 'unknown',
+                    metrics: { cpu: 0, ram: 0, disk: 0 },
+                    lastUpdated: new Date().toISOString()
+                };
+            }
+
+            return metric;
         } catch (error) {
             logger.error(`Error getting metrics for server ${serverId}:`, error);
             throw new Error('Failed to retrieve server metrics');
         }
     }
 
-    async getServerHistory(serverId) {
+    async getServerHistory(serverId, hours = 24) {
         try {
-            const historyFile = join(PATHS.HISTORY, `${serverId}.json`);
-            return readJSONFile(historyFile);
+            return await this.metricRepository.getServerMetricsHistory(serverId, hours);
         } catch (error) {
             logger.error(`Error getting history for server ${serverId}:`, error);
             throw new Error('Failed to retrieve server history');
         }
     }
 
-    async initializeServerMetrics(server) {
-        try {
-            const initialMetrics = new Metrics({
-                id: server.id,
-                name: server.name,
-                location: server.location,
-                status: 'offline',
-                metrics: { cpu: 0, ram: 0, disk: 0 }
-            });
-
-            const metricsFile = join(PATHS.METRICS, `${server.id}.json`);
-            const historyFile = join(PATHS.HISTORY, `${server.id}.json`);
-
-            writeJSONFile(metricsFile, initialMetrics.toJSON());
-            writeJSONFile(historyFile, []);
-
-            logger.info(`Initialized metrics for server: ${server.name}`);
-        } catch (error) {
-            logger.error(`Error initializing metrics for server ${server.id}:`, error);
-            throw new Error('Failed to initialize server metrics');
-        }
-    }
-
-    async updateServerMetrics(serverId, newMetrics) {
+    async updateServerMetrics(serverId, metricsData) {
         try {
             // Validate metrics
-            this._validateMetrics(newMetrics);
+            this._validateMetrics(metricsData);
 
-            // Update metrics file
-            const metricsFile = join(PATHS.METRICS, `${serverId}.json`);
-            const currentMetrics = Metrics.fromJSON(readJSONFile(metricsFile));
+            // Get server info for notifications
+            const server = await this.serverRepository.findByIdWithDetails(serverId);
+            if (!server) {
+                throw new Error('Server not found');
+            }
 
-            currentMetrics.updateMetrics(newMetrics);
-            writeJSONFile(metricsFile, currentMetrics.toJSON());
+            // Get previous status for comparison
+            const previousMetric = await this.metricRepository.findLatestByServerId(serverId);
+            const previousStatus = previousMetric?.status || 'unknown';
 
-            // Update history
-            await this._updateHistory(serverId, {
-                timestamp: new Date().toISOString(),
+            // Update metrics
+            const metric = await this.metricRepository.createOrUpdateMetric(serverId, {
                 status: 'online',
-                metrics: newMetrics
+                cpu: metricsData.cpu,
+                ram: metricsData.ram,
+                disk: metricsData.disk
             });
 
-            logger.info(`Updated metrics for server: ${serverId}`);
-            return currentMetrics;
+            // Check for status changes and high usage
+            await this._handleStatusChange(server, previousStatus, 'online');
+            await this._checkHighUsage(server, metricsData);
+
+            logger.info(`Metrics updated for server: ${server.name}`);
+            return metric;
         } catch (error) {
             logger.error(`Error updating metrics for server ${serverId}:`, error);
             throw error;
         }
     }
 
-    async setServerOffline(serverId) {
+    async setServerOffline(serverId, reason = null) {
         try {
-            const metricsFile = join(PATHS.METRICS, `${serverId}.json`);
-            const metrics = Metrics.fromJSON(readJSONFile(metricsFile));
+            const server = await this.serverRepository.findByIdWithDetails(serverId);
+            if (!server) {
+                throw new Error('Server not found');
+            }
 
-            metrics.setOffline();
-            writeJSONFile(metricsFile, metrics.toJSON());
+            // Get previous status
+            const previousMetric = await this.metricRepository.findLatestByServerId(serverId);
+            const previousStatus = previousMetric?.status || 'unknown';
 
-            // Update history
-            await this._updateHistory(serverId, {
-                timestamp: new Date().toISOString(),
-                status: 'offline',
-                metrics: { cpu: 0, ram: 0, disk: 0 }
-            });
+            // Set server offline
+            const metric = await this.metricRepository.updateServerStatus(serverId, 'offline');
 
-            logger.info(`Set server offline: ${serverId}`);
-            return metrics;
+            // Handle status change notification
+            await this._handleStatusChange(server, previousStatus, 'offline', reason);
+
+            logger.info(`Server set offline: ${server.name}`);
+            return metric;
         } catch (error) {
             logger.error(`Error setting server offline ${serverId}:`, error);
             throw error;
         }
     }
 
-    async deleteServerData(serverId) {
+    async getSystemOverview() {
         try {
-            const metricsFile = join(PATHS.METRICS, `${serverId}.json`);
-            const historyFile = join(PATHS.HISTORY, `${serverId}.json`);
-
-            deleteFile(metricsFile);
-            deleteFile(historyFile);
-
-            logger.info(`Deleted data for server: ${serverId}`);
+            return await this.metricRepository.getSystemOverview();
         } catch (error) {
-            logger.error(`Error deleting data for server ${serverId}:`, error);
+            logger.error('Error getting system overview:', error);
             throw error;
         }
     }
 
-    async _updateHistory(serverId, historyEntry) {
+    async cleanupOldMetrics(retentionDays = 30) {
         try {
-            const historyFile = join(PATHS.HISTORY, `${serverId}.json`);
-            const history = readJSONFile(historyFile);
+            return await this.metricRepository.deleteOldMetrics(retentionDays);
+        } catch (error) {
+            logger.error('Error cleaning up old metrics:', error);
+            throw error;
+        }
+    }
 
-            history.push(historyEntry);
+    async getServerUptimeStats(serverId, timeRange = '24h') {
+        try {
+            const hours = this._parseTimeRange(timeRange);
+            const history = await this.metricRepository.getServerMetricsHistory(serverId, hours);
 
-            // Calculate retention limit (entries per day * retention days)
-            const maxEntries = 24 * 60 * HISTORY_RETENTION_DAYS; // 1 entry per minute
-
-            if (history.length > maxEntries) {
-                history.splice(0, history.length - maxEntries);
+            if (history.length === 0) {
+                return { uptime: 0, totalChecks: 0, onlineChecks: 0, timeRange };
             }
 
-            writeJSONFile(historyFile, history);
+            const onlineChecks = history.filter(entry => entry.status === 'online').length;
+            const totalChecks = history.length;
+            const uptime = totalChecks > 0 ? (onlineChecks / totalChecks) * 100 : 0;
+
+            return {
+                uptime: Math.round(uptime * 100) / 100,
+                totalChecks,
+                onlineChecks,
+                timeRange
+            };
         } catch (error) {
-            logger.error(`Error updating history for server ${serverId}:`, error);
+            logger.error(`Error getting uptime stats for server ${serverId}:`, error);
             throw error;
+        }
+    }
+
+    async getMetricsForTimeRange(serverId, startDate, endDate) {
+        try {
+            return await this.metricRepository.findByServerIdInRange(serverId, startDate, endDate);
+        } catch (error) {
+            logger.error(`Error getting metrics for time range (server ${serverId}):`, error);
+            throw error;
+        }
+    }
+
+    async checkServerHealth(serverId, timeoutMinutes = 5) {
+        try {
+            const latestMetric = await this.metricRepository.findLatestByServerId(serverId);
+
+            if (!latestMetric) {
+                return { healthy: false, reason: 'No metrics found' };
+            }
+
+            const now = new Date();
+            const lastUpdate = new Date(latestMetric.lastUpdated);
+            const diffMinutes = (now - lastUpdate) / (1000 * 60);
+
+            if (diffMinutes > timeoutMinutes) {
+                // Server appears to be offline due to timeout
+                await this.setServerOffline(serverId, `No metrics received for ${Math.round(diffMinutes)} minutes`);
+                return { healthy: false, reason: `Timeout (${Math.round(diffMinutes)} minutes)` };
+            }
+
+            if (latestMetric.status !== 'online') {
+                return { healthy: false, reason: `Status: ${latestMetric.status}` };
+            }
+
+            return { healthy: true, lastUpdate: latestMetric.lastUpdated };
+        } catch (error) {
+            logger.error(`Error checking server health ${serverId}:`, error);
+            return { healthy: false, reason: 'Health check failed' };
+        }
+    }
+
+    // Private helper methods
+    async _handleStatusChange(server, previousStatus, newStatus, reason = null) {
+        if (previousStatus === newStatus) {
+            return; // No status change
+        }
+
+        try {
+            if (newStatus === 'offline' && previousStatus === 'online') {
+                const message = reason
+                    ? `A "${server.name}" szerver offline állapotba került. Indok: ${reason}`
+                    : `A "${server.name}" szerver offline állapotba került`;
+
+                await this.notificationService.createErrorNotification(message);
+            } else if (newStatus === 'online' && previousStatus === 'offline') {
+                await this.notificationService.createSuccessNotification(
+                    `A "${server.name}" szerver ismét online állapotban van`
+                );
+            }
+        } catch (error) {
+            logger.error(`Error handling status change notification for server ${server.name}:`, error);
+        }
+    }
+
+    async _checkHighUsage(server, metrics, threshold = 85) {
+        try {
+            const highUsageFields = [];
+
+            if (metrics.cpu > threshold) highUsageFields.push(`CPU: ${metrics.cpu}%`);
+            if (metrics.ram > threshold) highUsageFields.push(`RAM: ${metrics.ram}%`);
+            if (metrics.disk > threshold) highUsageFields.push(`Disk: ${metrics.disk}%`);
+
+            if (highUsageFields.length > 0) {
+                const message = `Magas erőforrás használat a "${server.name}" szerveren: ${highUsageFields.join(', ')}`;
+                await this.notificationService.createWarningNotification(message);
+            }
+        } catch (error) {
+            logger.error(`Error checking high usage for server ${server.name}:`, error);
         }
     }
 
@@ -146,6 +238,16 @@ export class MetricsService {
             if (metrics[field] < 0 || metrics[field] > 100) {
                 throw new Error(`${field} must be between 0 and 100`);
             }
+        }
+    }
+
+    _parseTimeRange(timeRange) {
+        switch (timeRange) {
+            case '1h': return 1;
+            case '24h': return 24;
+            case '7d': return 24 * 7;
+            case '30d': return 24 * 30;
+            default: return 24;
         }
     }
 }

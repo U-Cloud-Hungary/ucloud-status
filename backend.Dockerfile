@@ -15,4 +15,4 @@ COPY . .
 EXPOSE 3000
 
 # Start the server
-CMD ["sh", "-c", "npm run dev || (echo 'Server crashed, keeping container alive for debugging' && tail -f /dev/null)"]
+CMD ["sh", "-c", "npx prisma generate && npx prisma db push --accept-data-loss && npm run dev -- --host"]

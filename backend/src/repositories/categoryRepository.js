@@ -1,93 +1,147 @@
+import { BaseRepository } from './BaseRepository.js';
 import { Category } from '../models/Category.js';
-import { readJSONFile, writeJSONFile, PATHS } from '../utils/fileHelper.js';
+import { Server } from '../models/Server.js';
 import logger from '../utils/logger.js';
 
-export class CategoryRepository {
+export class CategoryRepository extends BaseRepository {
+    constructor() {
+        super('category');
+    }
+
+    static get INCLUDES() {
+        return {
+            withServers: {
+                servers: {
+                    include: {
+                        metrics: {
+                            take: 1,
+                            orderBy: { lastUpdated: 'desc' }
+                        }
+                    }
+                }
+            },
+            withServerCount: {
+                _count: {
+                    select: { servers: true }
+                }
+            }
+        };
+    }
+
     async findAll() {
-        try {
-            const data = readJSONFile(PATHS.CATEGORIES);
-            return data.categories.map(cat => Category.fromJSON(cat));
-        } catch (error) {
-            logger.error('Error finding all categories:', error);
-            throw error;
-        }
+        const categories = await this.findMany({
+            include: CategoryRepository.INCLUDES.withServers,
+            orderBy: { createdAt: 'asc' }
+        });
+
+        return this._mapToModels(categories);
     }
 
-    async findById(id) {
-        try {
-            const categories = await this.findAll();
-            return categories.find(cat => cat.id === id);
-        } catch (error) {
-            logger.error(`Error finding category ${id}:`, error);
-            throw error;
+    async findByIdWithServers(id) {
+        const category = await this.findById(id, CategoryRepository.INCLUDES.withServers);
+
+        if (!category) {
+            return null;
         }
+
+        return this._mapToModel(category);
     }
 
-    async create(categoryData) {
-        try {
-            const data = readJSONFile(PATHS.CATEGORIES);
-            const newCategory = new Category(categoryData);
+    async createCategory(categoryData) {
+        const data = {
+            id: categoryData.id,
+            name: categoryData.name.trim()
+        };
 
-            data.categories.push(newCategory.toJSON());
-            writeJSONFile(PATHS.CATEGORIES, data);
+        const category = await this.create(data, CategoryRepository.INCLUDES.withServers);
 
-            logger.info(`Created category: ${newCategory.name}`);
-            return newCategory;
-        } catch (error) {
-            logger.error('Error creating category:', error);
-            throw error;
-        }
+        logger.info(`Category created: ${category.name} (${category.id})`);
+        return this._mapToModel(category);
     }
 
-    async update(id, updateData) {
-        try {
-            const data = readJSONFile(PATHS.CATEGORIES);
-            const categoryIndex = data.categories.findIndex(cat => cat.id === id);
+    async updateCategory(id, updateData) {
+        const data = {};
 
-            if (categoryIndex === -1) {
-                throw new Error('Category not found');
+        if (updateData.name) {
+            data.name = updateData.name.trim();
+        }
+
+        const category = await this.update(id, data, CategoryRepository.INCLUDES.withServers);
+
+        logger.info(`Category updated: ${category.name} (${category.id})`);
+        return this._mapToModel(category);
+    }
+
+    async deleteCategory(id) {
+        // Check if category has servers
+        const serverCount = await this.db.server.count({
+            where: { categoryId: id }
+        });
+
+        if (serverCount > 0) {
+            throw new Error(`Cannot delete category with ${serverCount} servers. Move or delete servers first.`);
+        }
+
+        await this.delete(id);
+
+        logger.info(`Category deleted: ${id}`);
+        return true;
+    }
+
+    async getCategoryStats(id) {
+        const category = await this.findById(id, {
+            _count: {
+                select: { servers: true }
+            },
+            servers: {
+                include: {
+                    metrics: {
+                        take: 1,
+                        orderBy: { lastUpdated: 'desc' }
+                    }
+                }
             }
+        });
 
-            data.categories[categoryIndex] = { ...data.categories[categoryIndex], ...updateData };
-            writeJSONFile(PATHS.CATEGORIES, data);
+        if (!category) {
+            return null;
+        }
 
-            const updatedCategory = Category.fromJSON(data.categories[categoryIndex]);
-            logger.info(`Updated category: ${updatedCategory.name}`);
-            return updatedCategory;
-        } catch (error) {
-            logger.error(`Error updating category ${id}:`, error);
-            throw error;
+        const onlineServers = category.servers.filter(server =>
+            server.metrics[0]?.status === 'online'
+        ).length;
+
+        return {
+            id: category.id,
+            name: category.name,
+            totalServers: category._count.servers,
+            onlineServers,
+            offlineServers: category._count.servers - onlineServers
+        };
+    }
+
+    async seedInitialData() {
+        const existingCount = await this.count();
+
+        if (existingCount === 0) {
+            await this.createCategory({
+                id: 'vps_backend',
+                name: 'VPS Backend'
+            });
+
+            logger.info('Initial category data seeded');
         }
     }
 
-    async delete(id) {
-        try {
-            const data = readJSONFile(PATHS.CATEGORIES);
-            const initialLength = data.categories.length;
-
-            data.categories = data.categories.filter(cat => cat.id !== id);
-
-            if (data.categories.length === initialLength) {
-                throw new Error('Category not found');
-            }
-
-            writeJSONFile(PATHS.CATEGORIES, data);
-            logger.info(`Deleted category: ${id}`);
-            return true;
-        } catch (error) {
-            logger.error(`Error deleting category ${id}:`, error);
-            throw error;
-        }
+    // Private helper methods
+    _mapToModel(categoryData) {
+        return Category.fromJSON({
+            ...categoryData,
+            servers: categoryData.servers?.map(server => Server.fromJSON(server)) || []
+        });
     }
 
-    async save(categories) {
-        try {
-            const data = { categories: categories.map(cat => cat.toJSON()) };
-            writeJSONFile(PATHS.CATEGORIES, data);
-            logger.info('Saved categories data');
-        } catch (error) {
-            logger.error('Error saving categories:', error);
-            throw error;
-        }
+    _mapToModels(categoriesData) {
+        return categoriesData.map(category => this._mapToModel(category));
     }
 }

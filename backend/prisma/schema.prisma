@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id        String   @id @db.VarChar(36)
+  name      String   @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  servers Server[]
+
+  @@index([name])
+  @@map("categories")
+}
+
+model Server {
+  id         String   @id @db.VarChar(36)
+  name       String   @db.VarChar(100)
+  location   String   @db.VarChar(100)
+  apiKey     String   @unique @map("api_key") @db.VarChar(255)
+  categoryId String   @map("category_id") @db.VarChar(36)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  metrics  Metric[]
+
+  @@index([categoryId])
+  @@index([name])
+  @@index([apiKey])
+  @@map("servers")
+}
+
+model Metric {
+  id          String   @id @db.VarChar(36)
+  serverId    String   @map("server_id") @db.VarChar(36)
+  status      String   @default("offline") @db.VarChar(20)
+  cpuUsage    Float    @default(0) @map("cpu_usage") @db.Float
+  ramUsage    Float    @default(0) @map("ram_usage") @db.Float
+  diskUsage   Float    @default(0) @map("disk_usage") @db.Float
+  lastUpdated DateTime @default(now()) @map("last_updated") @db.DateTime(0)
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([serverId])
+  @@index([lastUpdated])
+  @@index([serverId, lastUpdated])
+  @@map("metrics")
+}
+
+model Notification {
+  id        String   @id @db.VarChar(36)
+  type      String   @db.VarChar(20)
+  message   String   @db.Text
+  active    Boolean  @default(true)
+  timestamp DateTime @default(now()) @db.DateTime(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@index([active])
+  @@index([timestamp])
+  @@index([type, active])
+  @@map("notifications")
+}

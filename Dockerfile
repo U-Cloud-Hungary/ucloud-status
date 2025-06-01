@@ -68,6 +68,7 @@ COPY config/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Copy scripts from host
 COPY scripts/healthcheck.sh /usr/local/bin/healthcheck
 COPY scripts/startup.sh /usr/local/bin/startup
+COPY scripts/backend_start.sh /app/backend/start.sh
 
 # Make scripts executable and set ownership
 RUN chmod +x /usr/local/bin/healthcheck /usr/local/bin/startup && \
@@ -75,18 +76,12 @@ RUN chmod +x /usr/local/bin/healthcheck /usr/local/bin/startup && \
 
 # Create data directories and set permissions
 RUN mkdir -p \
-    /app/data \
-    /app/data/metrics \
-    /app/data/history \
-    /app/data/logs \
     /tmp/app \
     /tmp/nginx_client_temp \
     /tmp/nginx_proxy_temp \
     /tmp/nginx_fastcgi_temp \
     /tmp/nginx_uwsgi_temp \
     /tmp/nginx_scgi_temp && \
-    chown -R cloudron:cloudron /app/data && \
-    chmod -R 755 /app/data && \
     chown -R cloudron:cloudron /app /tmp/app /tmp/nginx*
 
 # Remove default nginx configs (security)

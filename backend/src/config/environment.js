@@ -1,38 +1,27 @@
 import dotenv from 'dotenv';
-import path from 'path';
+import { existsSync } from 'fs';
 
-dotenv.config();
+console.log('DATABASE_URL BEFORE:', process.env.DATABASE_URL);
+
+if (existsSync('.env')) {
+    console.log('✅ .env file found, loading...');
+
+    const result = dotenv.config({
+        path: '.env',
+        override: true
+    });
+
+    console.log('Dotenv result:', result.parsed);
+    console.log('DATABASE_URL AFTER:', process.env.DATABASE_URL);
+} else {
+    console.log('❌ .env file not found');
+}
 
 export const NODE_ENV = process.env.NODE_ENV || 'development';
 export const PORT = process.env.PORT || 3001;
-export const DATA_DIR = process.env.DATA_DIR
-    ? path.resolve(process.env.DATA_DIR)
-    : path.resolve('./data');
 export const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
-export const SERVER_OFFLINE_TIMEOUT = parseInt(process.env.SERVER_OFFLINE_TIMEOUT) || 2; // minutes
+export const SERVER_OFFLINE_TIMEOUT = parseInt(process.env.SERVER_OFFLINE_TIMEOUT) || 2;
 export const HISTORY_RETENTION_DAYS = parseInt(process.env.HISTORY_RETENTION_DAYS) || 365;
 
-// src/models/Server.js
-export class Server {
-    constructor({ id, name, location, apiKey, categoryId }) {
-        this.id = id;
-        this.name = name;
-        this.location = location;
-        this.apiKey = apiKey;
-        this.categoryId = categoryId;
-    }
-
-    static fromJSON(data) {
-        return new Server(data);
-    }
-
-    toJSON() {
-        return {
-            id: this.id,
-            name: this.name,
-            location: this.location,
-            apiKey: this.apiKey,
-            categoryId: this.categoryId
-        };
-    }
-}
+// Debug az export után is
+console.log('Final DATABASE_URL:', process.env.DATABASE_URL);

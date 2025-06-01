@@ -1,153 +1,220 @@
+import { BaseRepository } from './BaseRepository.js';
 import { Server } from '../models/Server.js';
-import { CategoryRepository } from './categoryRepository.js';
 import logger from '../utils/logger.js';
 
-export class ServerRepository {
+export class ServerRepository extends BaseRepository {
     constructor() {
-        this.categoryRepository = new CategoryRepository();
+        super('server');
+    }
+
+    static get INCLUDES() {
+        return {
+            withCategory: {
+                category: true
+            },
+            withLatestMetric: {
+                metrics: {
+                    take: 1,
+                    orderBy: { lastUpdated: 'desc' }
+                }
+            },
+            withCategoryAndMetrics: {
+                category: true,
+                metrics: {
+                    take: 1,
+                    orderBy: { lastUpdated: 'desc' }
+                }
+            }
+        };
     }
 
     async findAll() {
-        try {
-            const categories = await this.categoryRepository.findAll();
-            const servers = [];
+        const servers = await this.findMany({
+            include: ServerRepository.INCLUDES.withCategoryAndMetrics,
+            orderBy: { createdAt: 'asc' }
+        });
 
-            categories.forEach(category => {
-                if (category.servers) {
-                    servers.push(...category.servers);
-                }
-            });
-
-            return servers;
-        } catch (error) {
-            logger.error('Error finding all servers:', error);
-            throw error;
-        }
+        return this._mapToModels(servers);
     }
 
-    async findById(id) {
-        try {
-            const categories = await this.categoryRepository.findAll();
+    async findByIdWithDetails(id) {
+        const server = await this.findById(id, ServerRepository.INCLUDES.withCategoryAndMetrics);
 
-            for (const category of categories) {
-                const server = category.findServer(id);
-                if (server) {
-                    return server;
-                }
-            }
-
+        if (!server) {
             return null;
-        } catch (error) {
-            logger.error(`Error finding server ${id}:`, error);
-            throw error;
         }
+
+        return this._mapToModel(server);
     }
 
     async findByApiKey(apiKey) {
-        try {
-            const servers = await this.findAll();
-            return servers.find(server => server.apiKey === apiKey);
-        } catch (error) {
-            logger.error('Error finding server by API key:', error);
-            throw error;
+        const server = await this.executeWithErrorHandling(
+            () => this.model.findUnique({
+                where: { apiKey },
+                include: ServerRepository.INCLUDES.withCategoryAndMetrics
+            }),
+            'Find server by API key'
+        );
+
+        if (!server) {
+            return null;
+        }
+
+        return this._mapToModel(server);
+    }
+
+    async findByCategoryId(categoryId) {
+        const servers = await this.findMany({
+            where: { categoryId },
+            include: ServerRepository.INCLUDES.withLatestMetric,
+            orderBy: { name: 'asc' }
+        });
+
+        return this._mapToModels(servers);
+    }
+
+    async createServer(serverData) {
+        await this._validateCategoryExists(serverData.categoryId);
+        await this._validateUniqueApiKey(serverData.apiKey);
+
+        const data = {
+            id: serverData.id,
+            name: serverData.name.trim(),
+            location: serverData.location.trim(),
+            apiKey: serverData.apiKey,
+            categoryId: serverData.categoryId
+        };
+
+        const server = await this.create(data, ServerRepository.INCLUDES.withCategoryAndMetrics);
+
+        logger.info(`Server created: ${server.name} (${server.id})`);
+        return this._mapToModel(server);
+    }
+
+    async updateServer(id, updateData) {
+        const existingServer = await this.findById(id);
+        if (!existingServer) {
+            throw new Error('Server not found');
+        }
+
+        const data = {};
+
+        if (updateData.name) {
+            data.name = updateData.name.trim();
+        }
+
+        if (updateData.location) {
+            data.location = updateData.location.trim();
+        }
+
+        if (updateData.categoryId) {
+            await this._validateCategoryExists(updateData.categoryId);
+            data.categoryId = updateData.categoryId;
+        }
+
+        if (updateData.apiKey && updateData.apiKey !== existingServer.apiKey) {
+            await this._validateUniqueApiKey(updateData.apiKey);
+            data.apiKey = updateData.apiKey;
+        }
+
+        const server = await this.update(id, data, ServerRepository.INCLUDES.withCategoryAndMetrics);
+
+        logger.info(`Server updated: ${server.name} (${server.id})`);
+        return this._mapToModel(server);
+    }
+
+    async deleteServer(id) {
+        const server = await this.findById(id);
+        if (!server) {
+            throw new Error('Server not found');
+        }
+
+        // Delete related metrics first (cascade should handle this, but being explicit)
+        await this.db.metric.deleteMany({
+            where: { serverId: id }
+        });
+
+        await this.delete(id);
+
+        logger.info(`Server deleted: ${server.name} (${id})`);
+        return true;
+    }
+
+    async getServerStats() {
+        const [total, online, offline] = await Promise.all([
+            this.count(),
+            this._countServersByStatus('online'),
+            this._countServersByStatus('offline')
+        ]);
+
+        return {
+            total,
+            online,
+            offline,
+            unknown: total - online - offline
+        };
+    }
+
+    async getServersByStatus(status) {
+        const servers = await this.db.server.findMany({
+            where: {
+                metrics: {
+                    some: {
+                        status,
+                        lastUpdated: {
+                            gte: new Date(Date.now() - 5 * 60 * 1000) // Last 5 minutes
+                        }
+                    }
+                }
+            },
+            include: ServerRepository.INCLUDES.withCategoryAndMetrics
+        });
+
+        return this._mapToModels(servers);
+    }
+
+    // Private validation methods
+    async _validateCategoryExists(categoryId) {
+        const categoryExists = await this.db.category.findUnique({
+            where: { id: categoryId }
+        });
+
+        if (!categoryExists) {
+            throw new Error(`Category with ID ${categoryId} not found`);
         }
     }
 
-    async create(serverData) {
-        try {
-            const category = await this.categoryRepository.findById(serverData.categoryId);
-            if (!category) {
-                throw new Error('Category not found');
-            }
+    async _validateUniqueApiKey(apiKey, excludeServerId = null) {
+        const existingServer = await this.db.server.findUnique({
+            where: { apiKey }
+        });
 
-            const newServer = new Server(serverData);
-            category.addServer(newServer);
-
-            const categories = await this.categoryRepository.findAll();
-            const categoryIndex = categories.findIndex(cat => cat.id === category.id);
-            categories[categoryIndex] = category;
-
-            await this.categoryRepository.save(categories);
-
-            logger.info(`Created server: ${newServer.name}`);
-            return newServer;
-        } catch (error) {
-            logger.error('Error creating server:', error);
-            throw error;
+        if (existingServer && existingServer.id !== excludeServerId) {
+            throw new Error('API key must be unique');
         }
     }
 
-    async update(id, updateData) {
-        try {
-            const categories = await this.categoryRepository.findAll();
-            let targetCategory = null;
-            let server = null;
-
-            // Find server and its category
-            for (const category of categories) {
-                server = category.findServer(id);
-                if (server) {
-                    targetCategory = category;
-                    break;
+    async _countServersByStatus(status) {
+        return await this.db.server.count({
+            where: {
+                metrics: {
+                    some: {
+                        status,
+                        lastUpdated: {
+                            gte: new Date(Date.now() - 5 * 60 * 1000) // Last 5 minutes
+                        }
+                    }
                 }
             }
-
-            if (!server || !targetCategory) {
-                throw new Error('Server not found');
-            }
-
-            // Update server properties
-            Object.assign(server, updateData);
-
-            // Handle category change
-            if (updateData.categoryId && updateData.categoryId !== targetCategory.id) {
-                const newCategory = categories.find(cat => cat.id === updateData.categoryId);
-                if (!newCategory) {
-                    throw new Error('New category not found');
-                }
-
-                // Remove from old category
-                targetCategory.removeServer(id);
-
-                // Add to new category
-                server.categoryId = newCategory.id;
-                newCategory.addServer(server);
-            }
-
-            await this.categoryRepository.save(categories);
-
-            logger.info(`Updated server: ${server.name}`);
-            return server;
-        } catch (error) {
-            logger.error(`Error updating server ${id}:`, error);
-            throw error;
-        }
+        });
     }
 
-    async delete(id) {
-        try {
-            const categories = await this.categoryRepository.findAll();
-            let found = false;
+    // Private helper methods
+    _mapToModel(serverData) {
+        return Server.fromJSON(serverData);
+    }
 
-            categories.forEach(category => {
-                const initialLength = category.servers.length;
-                category.removeServer(id);
-                if (category.servers.length < initialLength) {
-                    found = true;
-                }
-            });
-
-            if (!found) {
-                throw new Error('Server not found');
-            }
-
-            await this.categoryRepository.save(categories);
-
-            logger.info(`Deleted server: ${id}`);
-            return true;
-        } catch (error) {
-            logger.error(`Error deleting server ${id}:`, error);
-            throw error;
-        }
+    _mapToModels(serversData) {
+        return serversData.map(server => this._mapToModel(server));
     }
 }
