@@ -108,17 +108,16 @@ jobs:
           npm install -g cloudron
           cloudron --version
 
-      - name: 🔑 Login to Cloudron
+      - name: Login to Cloudron
         run: |
           echo "🔐 Logging into Cloudron..."
-          # Debug információk
-          echo "Server: ${{ secrets.CLOUDRON_SERVER_URL }}"
-          echo "Username: ${{ secrets.CLOUDRON_USERNAME }}"
-          
-          # Login with explicit parameters
-          cloudron login "${{ secrets.CLOUDRON_SERVER_URL }}" \
+          cloudron login "${{ secrets.CLOUDRON_SERVER }}" \
             -u "${{ secrets.CLOUDRON_USERNAME }}" \
             -p "${{ secrets.CLOUDRON_PASSWORD }}"
+        env:
+          CLOUDRON_SERVER: ${{ secrets.CLOUDRON_SERVER }}
+          CLOUDRON_USERNAME: ${{ secrets.CLOUDRON_USERNAME }}
+          CLOUDRON_PASSWORD: ${{ secrets.CLOUDRON_PASSWORD }}
 
       - name: 🔍 Check if App Exists
         id: check_app
