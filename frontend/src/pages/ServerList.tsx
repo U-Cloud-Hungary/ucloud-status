@@ -40,7 +40,7 @@ const ServerList: React.FC = () => {
       >
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-2xl font-semibold text-white">Rendszer Állapot</h1>
+            <h1 className="text-2xl font-semibold text-white">test Rendszer Állapot</h1>
             <p className="text-slate-400 mt-1">365 napos átlag</p>
           </div>
           <div className="text-right">
