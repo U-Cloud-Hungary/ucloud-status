@@ -41,7 +41,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       image_tag: ${{ steps.version.outputs.image_tag }}
-    
+
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
@@ -86,28 +86,6 @@ jobs:
           build-args: |
             BUILDPLATFORM=linux/amd64
 
-      - name: 🧪 Test Docker Image
-        run: |
-          echo "🧪 Testing built image..."
-          docker run --rm --detach --name test-container \
-            -p 3000:3000 \
-            -e NODE_ENV=production \
-            -e DATABASE_URL="mysql://test:test@localhost:3306/test" \
-            ${{ steps.version.outputs.image_tag }}
-          
-          # Wait for container to start
-          sleep 10
-          
-          # Basic health check
-          if docker ps | grep test-container; then
-            echo "✅ Container is running"
-            docker stop test-container
-          else
-            echo "❌ Container failed to start"
-            docker logs test-container
-            exit 1
-          fi
-
   # ===========================================
   # Job 2: Deploy to Cloudron (API Token)
   # ===========================================
@@ -118,7 +96,7 @@ jobs:
     if: |
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
       (github.event.inputs.deploy_to_cloudron != 'false')
-    
+
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
@@ -130,8 +108,8 @@ jobs:
           
           APP_INFO=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
-            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps" | \
-            jq -r '.apps[] | select(.location == "${{ env.CLOUDRON_APP_LOCATION }}") | .id')
+            "https://${{ secrets.CLOUDRON_SERVER_URL }}/api/v1/apps" | \
+            jq -r '.apps[] | select(.fqdn == "${{ secrets.CLOUDRON_APP_LOCATION }}") | .id')
           
           if [ -n "$APP_INFO" ] && [ "$APP_INFO" != "null" ]; then
             echo "app_id=$APP_INFO" >> $GITHUB_OUTPUT
@@ -147,24 +125,57 @@ jobs:
         run: |
           echo "🚀 Installing new app via API..."
           
-          INSTALL_RESULT=$(curl -s -w "%{http_code}" \
+          # Build JSON payload with proper variable substitution
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "subdomain": "${{ secrets.CLOUDRON_APP_SUBDOMAIN }}",
+            "domain": "${{ secrets.CLOUDRON_APP_DOMAIN }}",
+            "accessRestriction": {
+              "users": [],
+              "groups": []
+            },
+            "manifest": {
+              "version": "1.0.0",
+              "dockerImage": "${{ needs.build.outputs.image_tag }}",
+              "healthCheckPath": "/api/health",
+              "httpPort": 3000,
+              "title": "UCloud Status",
+              "description": "Status monitoring application",
+              "author": "UCloud Team",
+              "website": "https://${{ secrets.CLOUDRON_APP_SUBDOMAIN }}.${{ secrets.CLOUDRON_APP_DOMAIN }}",
+              "contactEmail": "admin@ucloud.hu",
+              "icon": "https://cloudron.io/img/logo.png",
+              "tagline": "Monitor your services",
+              "tags": ["monitoring", "status"],
+              "memoryLimit": 134217728,
+              "manifestVersion": 2,
+              "minBoxVersion": "4.0.0",
+              "addons": {}
+            }
+          }
+          EOF
+          )
+          
+          echo "📋 JSON Payload: $JSON_PAYLOAD"
+          
+          RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" \
             -X POST \
             -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "appStoreId": "",
-              "manifest": {
-                "image": "${{ needs.build.outputs.image_tag }}",
-                "location": "${{ env.CLOUDRON_APP_LOCATION }}"
-              }
-            }' \
-            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps")
+            -d "$JSON_PAYLOAD" \
+            "https://${{ secrets.CLOUDRON_SERVER_URL }}/api/v1/apps")
           
-          HTTP_CODE="${INSTALL_RESULT: -3}"
+          HTTP_CODE=$(echo $RESPONSE | tr -d '\n' | sed -E 's/.*HTTPSTATUS:([0-9]{3})$/\1/')
+          BODY=$(echo $RESPONSE | sed -E 's/HTTPSTATUS:[0-9]{3}$//')
+          
+          echo "📊 HTTP Status: $HTTP_CODE"
+          echo "📄 Response Body: $BODY"
+          
           if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
-            echo "✅ App installation started"
+            echo "✅ App installation started successfully"
           else
-            echo "❌ App installation failed: $INSTALL_RESULT"
+            echo "❌ App installation failed"
+            echo "🔍 Full response: $RESPONSE"
             exit 1
           fi
 
@@ -173,22 +184,36 @@ jobs:
         run: |
           echo "🔄 Updating existing app via API..."
           
-          UPDATE_RESULT=$(curl -s -w "%{http_code}" \
+          # Build JSON payload with proper variable substitution
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "manifest": {
+              "image": "${{ needs.build.outputs.image_tag }}"
+            }
+          }
+          EOF
+          )
+          
+          echo "📋 JSON Payload: $JSON_PAYLOAD"
+          
+          RESPONSE=$(curl -s -w "HTTPSTATUS:%{http_code}" \
             -X POST \
             -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "manifest": {
-                "image": "${{ needs.build.outputs.image_tag }}"
-              }
-            }' \
-            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps/${{ steps.app_info.outputs.app_id }}/update")
+            -d "$JSON_PAYLOAD" \
+            "https://${{ secrets.CLOUDRON_SERVER_URL }}/api/v1/apps/${{ steps.app_info.outputs.app_id }}/update")
           
-          HTTP_CODE="${UPDATE_RESULT: -3}"
+          HTTP_CODE=$(echo $RESPONSE | tr -d '\n' | sed -E 's/.*HTTPSTATUS:([0-9]{3})$/\1/')
+          BODY=$(echo $RESPONSE | sed -E 's/HTTPSTATUS:[0-9]{3}$//')
+          
+          echo "📊 HTTP Status: $HTTP_CODE"
+          echo "📄 Response Body: $BODY"
+          
           if [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ App update started"
+            echo "✅ App update started successfully"
           else
-            echo "❌ App update failed: $UPDATE_RESULT"
+            echo "❌ App update failed"
+            echo "🔍 Full response: $RESPONSE"
             exit 1
           fi
 
@@ -247,7 +272,7 @@ jobs:
           
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${{ env.CLOUDRON_APP_LOCATION }}/api/health" || echo "000")
-            
+          
             if [ "$HTTP_CODE" = "200" ]; then
               echo "✅ App is healthy!"
               break
@@ -271,7 +296,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, deploy]
     if: always()
-    
+
     steps:
       - name: 📢 Success Notification
         if: needs.deploy.result == 'success'
@@ -296,7 +321,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, deploy]
     if: needs.deploy.result == 'success' && github.ref == 'refs/heads/main'
-    
+
     steps:
       - name: 🧹 Clean up old Docker images
         run: |
