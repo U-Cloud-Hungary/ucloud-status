@@ -8,7 +8,6 @@ on:
   push:
     branches:
       - main
-      - develop
     tags:
       - 'v*'
   pull_request:
@@ -29,7 +28,7 @@ on:
 
 env:
   IMAGE_NAME: turizoltan96/ucaloudstatus
-  CLOUDRON_APP_LOCATION: test.ucloud.hu
+  CLOUDRON_APP_LOCATION: stat.ucloud.hu
 
 jobs:
   # ===========================================
