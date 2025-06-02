@@ -269,49 +269,6 @@ jobs:
             echo "🔍 Full response: $RESPONSE"
             exit 1
           fi
-
-      - name: ⚙️ Configure Environment Variables
-        if: steps.app_info.outputs.app_exists == 'true'
-        run: |
-          echo "⚙️ Setting up environment variables via API..."
-          
-          # Set environment variables
-          curl -s \
-            -X PUT \
-            -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "env": {
-                "NODE_ENV": "production",
-                "PORT": "3000",
-                "DATABASE_URL": "${{ secrets.DATABASE_URL }}",
-                "LOG_LEVEL": "info",
-                "SERVER_OFFLINE_TIMEOUT": "2",
-                "HISTORY_RETENTION_DAYS": "365"
-              }
-            }' \
-            "https://${{ secrets.CLOUDRON_SERVER_URL }}/api/v1/apps/${{ steps.app_info.outputs.app_id }}/env"
-          
-          echo "✅ Environment variables configured"
-
-      - name: 🔄 Restart App
-        if: steps.app_info.outputs.app_exists == 'true'
-        run: |
-          echo "🔄 Restarting app via API..."
-          
-          RESTART_RESULT=$(curl -s -w "%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
-            "https://${{ secrets.CLOUDRON_SERVER_URL }}/api/v1/apps/${{ steps.app_info.outputs.app_id }}/restart")
-          
-          HTTP_CODE="${RESTART_RESULT: -3}"
-          if [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ App restart initiated"
-          else
-            echo "❌ App restart failed: $RESTART_RESULT"
-            exit 1
-          fi
-
       - name: ⏳ Wait for Deployment
         run: |
           echo "⏳ Waiting for deployment to complete..."
