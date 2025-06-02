@@ -219,11 +219,29 @@ jobs:
           # Image tag összeállítása
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/ucaloudstatus:${VERSION}"
           
-          # Build JSON payload
+          echo "🔍 Update values:"
+          echo "  - VERSION: $VERSION"
+          echo "  - IMAGE_TAG: $IMAGE_TAG"
+          
+          # Build JSON payload - teljes manifest az update-hez
           JSON_PAYLOAD=$(cat <<EOF
           {
             "manifest": {
-              "image": "$IMAGE_TAG"
+              "version": "1.0.0",
+              "dockerImage": "$IMAGE_TAG",
+              "healthCheckPath": "/api/health",
+              "httpPort": 3000,
+              "title": "UCloud Status",
+              "description": "Status monitoring application",
+              "author": "UCloud Team",
+              "contactEmail": "admin@ucloud.hu",
+              "icon": "https://cloudron.io/img/logo.png",
+              "tagline": "Monitor your services",
+              "tags": ["monitoring", "status"],
+              "memoryLimit": 134217728,
+              "manifestVersion": 2,
+              "minBoxVersion": "4.0.0",
+              "addons": {}
             }
           }
           EOF
