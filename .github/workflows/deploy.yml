@@ -83,8 +83,33 @@ jobs:
             ${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BUILDPLATFORM=linux/amd64
+
+      - name: 🧪 Test Docker Image
+        run: |
+          echo "🧪 Testing built image..."
+          docker run --rm --detach --name test-container \
+            -p 3000:3000 \
+            -e NODE_ENV=production \
+            -e DATABASE_URL="mysql://test:test@localhost:3306/test" \
+            ${{ steps.version.outputs.image_tag }}
+          
+          # Wait for container to start
+          sleep 10
+          
+          # Basic health check
+          if docker ps | grep test-container; then
+            echo "✅ Container is running"
+            docker stop test-container
+          else
+            echo "❌ Container failed to start"
+            docker logs test-container
+            exit 1
+          fi
+
   # ===========================================
-  # Job 2: Deploy to Cloudron
+  # Job 2: Deploy to Cloudron (API Token)
   # ===========================================
   deploy:
     name: 🚀 Deploy to Cloudron
@@ -98,71 +123,121 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🛠️ Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 📦 Install Cloudron CLI
+      - name: 🔍 Get App Info
+        id: app_info
         run: |
-          npm install -g cloudron
-          cloudron --version
-
-      - name: Login to Cloudron
-        run: |
-          echo "🔐 Logging into Cloudron..."
-          expect -c "
-          spawn cloudron login ${{ secrets.CLOUDRON_SERVER_URL }}
-          expect \"Username:\"
-          send \"${{ secrets.CLOUDRON_USERNAME }}\r\"
-          expect \"Password:\"
-          send \"${{ secrets.CLOUDRON_PASSWORD }}\r\"
-          expect eof
-          "
-      - name: 🔍 Check if App Exists
-        id: check_app
-        run: |
-          if cloudron list | grep -q "${{ env.CLOUDRON_APP_LOCATION }}"; then
+          echo "🔍 Getting app information..."
+          
+          APP_INFO=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
+            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps" | \
+            jq -r '.apps[] | select(.location == "${{ env.CLOUDRON_APP_LOCATION }}") | .id')
+          
+          if [ -n "$APP_INFO" ] && [ "$APP_INFO" != "null" ]; then
+            echo "app_id=$APP_INFO" >> $GITHUB_OUTPUT
             echo "app_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ App already exists, will update"
+            echo "✅ App exists with ID: $APP_INFO"
           else
             echo "app_exists=false" >> $GITHUB_OUTPUT
             echo "🆕 App doesn't exist, will install"
           fi
 
       - name: 🆕 Install New App (if needed)
-        if: steps.check_app.outputs.app_exists == 'false'
+        if: steps.app_info.outputs.app_exists == 'false'
         run: |
-          echo "🚀 Installing new app..."
-          cloudron install --image ${{ needs.build.outputs.image_tag }} \
-            --location ${{ env.CLOUDRON_APP_LOCATION }}
+          echo "🚀 Installing new app via API..."
+          
+          INSTALL_RESULT=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "appStoreId": "",
+              "manifest": {
+                "image": "${{ needs.build.outputs.image_tag }}",
+                "location": "${{ env.CLOUDRON_APP_LOCATION }}"
+              }
+            }' \
+            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps")
+          
+          HTTP_CODE="${INSTALL_RESULT: -3}"
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
+            echo "✅ App installation started"
+          else
+            echo "❌ App installation failed: $INSTALL_RESULT"
+            exit 1
+          fi
 
       - name: 🔄 Update Existing App
-        if: steps.check_app.outputs.app_exists == 'true'
+        if: steps.app_info.outputs.app_exists == 'true'
         run: |
-          echo "🔄 Updating existing app..."
-          cloudron update --app ${{ env.CLOUDRON_APP_LOCATION }} \
-            --image ${{ needs.build.outputs.image_tag }}
+          echo "🔄 Updating existing app via API..."
+          
+          UPDATE_RESULT=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "manifest": {
+                "image": "${{ needs.build.outputs.image_tag }}"
+              }
+            }' \
+            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps/${{ steps.app_info.outputs.app_id }}/update")
+          
+          HTTP_CODE="${UPDATE_RESULT: -3}"
+          if [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ App update started"
+          else
+            echo "❌ App update failed: $UPDATE_RESULT"
+            exit 1
+          fi
 
       - name: ⚙️ Configure Environment Variables
+        if: steps.app_info.outputs.app_exists == 'true'
         run: |
-          echo "⚙️ Setting up environment variables..."
-          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set NODE_ENV=production
-          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set PORT=3000
-          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set DATABASE_URL="${{ secrets.DATABASE_URL }}"
-          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set LOG_LEVEL=info
-          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set SERVER_OFFLINE_TIMEOUT=2
-          cloudron env --app ${{ env.CLOUDRON_APP_LOCATION }} --set HISTORY_RETENTION_DAYS=365
+          echo "⚙️ Setting up environment variables via API..."
+          
+          # Set environment variables
+          curl -s \
+            -X PUT \
+            -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "env": {
+                "NODE_ENV": "production",
+                "PORT": "3000",
+                "DATABASE_URL": "${{ secrets.DATABASE_URL }}",
+                "LOG_LEVEL": "info",
+                "SERVER_OFFLINE_TIMEOUT": "2",
+                "HISTORY_RETENTION_DAYS": "365"
+              }
+            }' \
+            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps/${{ steps.app_info.outputs.app_id }}/env"
+          
+          echo "✅ Environment variables configured"
 
       - name: 🔄 Restart App
+        if: steps.app_info.outputs.app_exists == 'true'
         run: |
-          echo "🔄 Restarting app..."
-          cloudron restart --app ${{ env.CLOUDRON_APP_LOCATION }}
+          echo "🔄 Restarting app via API..."
+          
+          RESTART_RESULT=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.CLOUDRON_API_TOKEN }}" \
+            "https://${{ env.CLOUDRON_APP_LOCATION }}/api/v1/apps/${{ steps.app_info.outputs.app_id }}/restart")
+          
+          HTTP_CODE="${RESTART_RESULT: -3}"
+          if [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ App restart initiated"
+          else
+            echo "❌ App restart failed: $RESTART_RESULT"
+            exit 1
+          fi
 
-      - name: ⏳ Wait for App to Start
+      - name: ⏳ Wait for Deployment
         run: |
-          echo "⏳ Waiting for app to start..."
-          sleep 30
+          echo "⏳ Waiting for deployment to complete..."
+          sleep 60  # Give time for update and restart
 
       - name: 🩺 Health Check
         run: |
@@ -171,19 +246,20 @@ jobs:
           RETRY_COUNT=0
           
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if curl -f -s "https://${{ env.CLOUDRON_APP_LOCATION }}/api/health"; then
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${{ env.CLOUDRON_APP_LOCATION }}/api/health" || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ]; then
               echo "✅ App is healthy!"
               break
             else
-              echo "⏳ App not ready yet, retrying in 15 seconds..."
+              echo "⏳ App not ready yet (HTTP: $HTTP_CODE), retrying in 15 seconds..."
               sleep 15
               RETRY_COUNT=$((RETRY_COUNT + 1))
             fi
           done
           
           if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-            echo "❌ App failed health check"
-            cloudron logs --app ${{ env.CLOUDRON_APP_LOCATION }} --lines 50
+            echo "❌ App failed health check after $MAX_RETRIES attempts"
             exit 1
           fi
 
